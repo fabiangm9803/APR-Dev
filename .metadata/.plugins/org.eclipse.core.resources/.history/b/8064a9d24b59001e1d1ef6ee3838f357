@@ -1,0 +1,216 @@
+package cl.apgcloud.ventaplus.repositorio.apr;
+
+import java.util.Date;
+import java.util.List;
+
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+
+import cl.apgcloud.ventaplus.modelo.apr.CobroPeriodoMedidor;
+
+/**
+ * Interfaz del tipo JPARepository para la tabla Cobro Periodo Medidor.
+ *
+ * @author Franco Gonzalez.
+ * @version 1.0
+ */
+public interface RepositorioCobroPeriodo extends JpaRepository<CobroPeriodoMedidor, Long> {
+
+	/**
+	 * Metodo listarCobroPeriodo.
+	 *
+	 * @param idLocal
+	 * @param periodo
+	 * @param idSector
+	 * @param pagina
+	 * @param cantidadRegistros
+	 * @param busquedaAvanzada
+	 * @return listado de cobros del periodo
+	 */
+	@Query(value = "EXEC APR.SP_LISTAR_COBRO_PERIODO_MEDIDOR ?1, ?2, ?3, ?4, ?5, ?6", nativeQuery = true)
+	List<CobroPeriodoMedidor> listarPeriodoCobro(Long idLocal, Integer periodo, Long idSector, Long pagina,
+			Long cantidadRegistros, String busquedaAvanzada);
+
+	/**
+	 * Metodo obtenercantCobroPeriodo.
+	 *
+	 * @param idCobro
+	 * @param nroMedidor
+	 * @param busquedaAvanzada
+	 * @return listado de cobros del periodo
+	 */
+	@Query(value = "EXEC APR.SP_OBTENER_CANT_COBRO_PERIODO ?1, ?2, ?3", nativeQuery = true)
+	List<CobroPeriodoMedidor> obtenercantCobroPeriodo(Long idCobro, Long nroMedidor, String busquedaAvanzada);
+
+	/**
+	 * Metodo obtenerCobroPorPagar.
+	 *
+	 * @param nroMedidor
+	 * @param nroSocio
+	 * @param idCliente
+	 * @return listado de cobros por pagar
+	 */
+	@Query(value = "EXEC APR.SP_OBTENER_COBRO_POR_PAGAR ?1, ?2, ?3, ?4", nativeQuery = true)
+	List<CobroPeriodoMedidor> listarCobroPorPagar(Long idLocal, Long nroMedidor, Integer nroSocio, Long idCliente);
+
+	/**
+	 * Metodo obtenerMedidorLecturaPendiente.
+	 *
+	 * @param idLocal
+	 * @param periodo
+	 * @param idSector
+	 * @param nroMedidor
+	 * @return medidor con ingreso de lectura pendiente
+	 */
+	@Query(value = "EXEC APR.SP_OBTENER_MEDIDOR_LECTURA_PENDIENTE ?1, ?2, ?3, ?4", nativeQuery = true)
+	CobroPeriodoMedidor obtenerMedidorLecturaPendiente(Long idLocal, Integer periodo, Long idSector, Long nroMedidor);
+
+	/**
+	 * Metodo obtenerPeriodoCobro.
+	 *
+	 * @param idCobro
+	 * @return cobro del periodo
+	 */
+	@Query(value = "EXEC APR.SP_OBTENER_COBRO_PERIODO_MEDIDOR ?1", nativeQuery = true)
+	CobroPeriodoMedidor obtenerPeriodoCobro(Long idCobro);
+
+	/**
+	 * Metodo crearPeriodoCobro.
+	 *
+	 * @param idLocal
+	 * @param periodoActual
+	 * @param periodoAnterior
+	 * @param fechaVencimiento
+	 * @return identificador del registro creado
+	 */
+	@Query(value = "EXEC APR.SP_CREAR_COBRO_PERIODO_MEDIDOR ?1, ?2, ?3, ?4", nativeQuery = true)
+	Long crearPeriodoCobro(Long idLocal, Integer periodoActual, Integer periodoAnterior, Date fechaVencimiento);
+
+	/**
+	 * Metodo ingresarLecturaActual.
+	 *
+	 * @param idCobro
+	 * @param lecturaAnterior
+	 * @return codigo de resultado de operacion
+	 */
+	@Query(value = "EXEC APR.SP_INGRESAR_LECTURA_ANTERIOR ?1, ?2", nativeQuery = true)
+	List<Object> ingresarLecturaAnterior(Long idCobro, Integer lecturaAnterior);
+
+	/**
+	 * Metodo ingresarLecturaActual.
+	 *
+	 * @param idCobro
+	 * @param lecturaActual
+	 * @return codigo de resultado de operacion
+	 */
+	@Query(value = "EXEC APR.SP_INGRESAR_LECTURA_ACTUAL ?1, ?2", nativeQuery = true)
+	List<Object> ingresarLecturaActual(Long idCobro, Integer lecturaActual);
+
+	/**
+	 * Metodo VerificarMultaPeriodoAnterior.
+	 *
+	 * @param periodoActual Long
+	 * @param idMedidor     Long
+	 * @return retornoConsulta RetornoConsulta
+	 */
+	@Query(value = "EXEC APR.SP_OBTENER_PAGO_MULTA_PERIODO_ANTERIOR ?1, ?2", nativeQuery = true)
+	List<Object> verificarMultaPeriodoAnterior(Integer periodoActual, Long idMedidor);
+
+	/**
+	 * Metodo ingresarPagoCobroMedidor.
+	 *
+	 * @param idCobro
+	 * @param idTipoPago
+	 * @param idBanco
+	 * @param bancoNroTransaccion
+	 * @param bancoFechaTransferencia
+	 * @param bancoNroCheque
+	 * @param folio
+	 * @return codigo de resultado de operacion
+	 */
+	@Query(value = "EXEC APR.SP_INGRESAR_PAGO_COBRO_PERIODO_MEDIDOR ?1, ?2, ?3, ?4, ?5, ?6", nativeQuery = true)
+	List<Object> ingresarPagoCobroMedidor(Long idCobro, Long idTipoPago, Integer idBanco, String bancoNroTransaccion,
+			Date bancoFechaTransferencia, String bancoNroCheque);
+
+	/**
+	 * Metodo ingresarAbonoCobroMedidor.
+	 *
+	 * @param idCobro
+	 * @param abono
+	 * @return codigo de resultado de operacion
+	 */
+	@Query(value = "EXEC APR.SP_INGRESAR_ABONO_COBRO_PERIODO_MEDIDOR ?1, ?2, ?3", nativeQuery = true)
+	List<Object> ingresarAbonoCobroMedidor(Long idCobro, Integer abono, Long idTipoPago);
+
+	/**
+	 * Metodo repactarDeudaMedidor.
+	 *
+	 * @param idMedidor
+	 * @return codigo de resultado de operacion
+	 */
+	@Query(value = "EXEC APR.SP_REPACTAR_DEUDA_MEDIDOR ?1", nativeQuery = true)
+	List<Object> repactarDeudaMedidor(Long idMedidor);
+
+	/**
+	 * Metodo listarPeriodos.
+	 *
+	 * @param idLocal
+	 * @return listado de periodos de cobro del APR
+	 */
+	@Query(value = "EXEC APR.SP_LISTAR_PERIODOS_LOCAL ?1", nativeQuery = true)
+	List<Integer> listarPeriodosLocal(Long idLocal);
+
+	/**
+	 * Metodo insertarRespuestaBoletaSII.
+	 *
+	 * @param folio
+	 * @param idVenta
+	 * @param token
+	 * @param fechaResolucion
+	 * @param numeroResolucion
+	 * @param timbre
+	 * @param esDTEExcento
+	 * @param flag_procesado_OK
+	 * @param json_request
+	 * @param header_request
+	 * @return true o false del estado de la operacion.
+	 */
+	@Query(value = "EXEC APR.SP_CREAR_BOLETA_ELEC ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10", nativeQuery = true)
+	Long insertarRespuestaBoletaSII(Integer folio, Long idCobro, String token, String fechaResolucion,
+			Integer numeroResolucion, String timbre, Boolean esDTEExcento, Boolean flag_procesado_OK,
+			String json_request, String header_request);
+
+	/**
+	 * Metodo insertarRespuestaFacturaSII.
+	 *
+	 * @param folio
+	 * @param idVenta
+	 * @param totalVentaSinIVA
+	 * @param porcentajeIVA
+	 * @param token
+	 * @param timbre
+	 * @param tipoCompra
+	 * @param tipoVenta
+	 * @param formaPago
+	 * @param codigoGiro
+	 * @param rutReceptor
+	 * @param razonSocialReceptor
+	 * @param codigoGiroReceptor
+	 * @param nombreGiroReceptor
+	 * @param direccionReceptor
+	 * @param comunaReceptor
+	 * @param correoReceptor
+	 * @param esDTEExcento
+	 * @param flag_procesado_OK
+	 * @param json_request
+	 * @param header_request
+	 * @return true o false del estado de la operacion.
+	 */
+	@Query(value = "EXEC APR.SP_CREAR_FACTURA_ELEC ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21", nativeQuery = true)
+	Long insertarRespuestaFacturaSII(Integer folio, Long idVenta, Integer totalVentaSinIVA, int porcentajeIVA,
+			String token, String timbre, Integer tipoCompra, Integer tipoVenta, Integer formaPago, String codigoGiro,
+			String rutReceptor, String razonSocialReceptor, String codigoGiroReceptor, String nombreGiroReceptor,
+			String direccionReceptor, String comunaReceptor, String correoReceptor, Boolean esDTEExcento,
+			Boolean flag_procesado_OK, String json_request, String header_request);
+
+}

@@ -1,0 +1,1089 @@
+package cl.apgcloud.ventaplus.controlador.apr;
+
+import java.math.BigDecimal;
+import java.net.URI;
+import java.net.URISyntaxException;
+import java.text.ParseException;
+import java.text.SimpleDateFormat;
+import java.util.Calendar;
+import java.util.Date;
+import java.util.List;
+
+import javax.inject.Inject;
+
+import org.apache.log4j.Logger;
+import org.hibernate.exception.GenericJDBCException;
+import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
+import org.springframework.orm.jpa.JpaSystemException;
+import org.springframework.web.bind.annotation.CrossOrigin;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestHeader;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestMethod;
+import org.springframework.web.bind.annotation.RestController;
+
+import cl.apgcloud.ventaplus.controlador.ventaweb.ControladorValidacionSesion;
+import cl.apgcloud.ventaplus.modelo.apr.ClienteConvenio;
+import cl.apgcloud.ventaplus.modelo.apr.ClienteConvenioCuota;
+import cl.apgcloud.ventaplus.modelo.apr.CobroPeriodoMedidor;
+import cl.apgcloud.ventaplus.modelo.apr.CobroPeriodoMedidorDetalle;
+import cl.apgcloud.ventaplus.modelo.apr.MedidorUltimoPagoAbonoResponse;
+import cl.apgcloud.ventaplus.modelo.apr.Tarifa;
+import cl.apgcloud.ventaplus.modelo.sii.boleta.ResponseBoleta;
+import cl.apgcloud.ventaplus.modelo.sii.factura.ResponseFactura;
+import cl.apgcloud.ventaplus.modelo.ventaweb.EmisorBoleta;
+import cl.apgcloud.ventaplus.modelo.ventaweb.RetornoConsulta;
+import cl.apgcloud.ventaplus.repositorio.apr.RepositorioClienteAPR;
+import cl.apgcloud.ventaplus.repositorio.apr.RepositorioClienteConvenio;
+import cl.apgcloud.ventaplus.repositorio.apr.RepositorioClienteConvenioCuota;
+import cl.apgcloud.ventaplus.repositorio.apr.RepositorioCobroPeriodo;
+import cl.apgcloud.ventaplus.repositorio.apr.RepositorioCobroPeriodoDetalle;
+import cl.apgcloud.ventaplus.repositorio.apr.RepositorioMedidorUltimoPagoAbono;
+import cl.apgcloud.ventaplus.repositorio.apr.RepositorioTarifa;
+import cl.apgcloud.ventaplus.repositorio.ventaweb.RepositorioEmisorBoleta;
+import cl.apgcloud.ventaplus.repositorio.ventaweb.RepositorioSesionUser;
+import cl.apgcloud.ventaplus.to.MensajeResponse;
+import cl.apgcloud.ventaplus.to.excepcion.VentaPlusException;
+import cl.apgcloud.ventaplus.util.HeaderUtil;
+import cl.apgcloud.ventaplus.util.MessageUtil;
+import cl.apgcloud.ventaplus.util.ValidadorUtil;
+
+/**
+ * Controlador REST para manejar los servicios de cobros de periodos por
+ * medidor.
+ *
+ * @author Franco Gonzalez.
+ * @version 1.0
+ */
+@CrossOrigin
+@RestController
+@RequestMapping("/servicios/cobroAPR")
+public class ControladorCobroPeriodoMedidor {
+
+	/**
+	 * Logger.
+	 */
+	private static Logger log = Logger.getLogger(ControladorCobroPeriodoMedidor.class);
+
+	/**
+	 * Nombre de contexto de la clase.
+	 */
+	private static final String NOMBRE_CONTEXTO = "CobroAPR";
+
+	/**
+	 * Atributo DTE_BOLETA_EXCENTA.
+	 */
+	private static final Long DTE_BOLETA_EXCENTA = 41L;
+
+	/**
+	 * Atributo DTE_FACTURA_EXCENTA.
+	 */
+	private static final Long DTE_FACTURA_EXCENTA = 34L;
+
+	/**
+	 * Repositorio para el manejo de cobros.
+	 */
+	@Inject
+	private RepositorioCobroPeriodo repositorioCobroPeriodo;
+
+	/**
+	 * Repositorio para el manejo de detalle de los cobros.
+	 */
+	@Inject
+	private RepositorioCobroPeriodoDetalle repositorioCobroPeriodoDetalle;
+
+	/**
+	 * Repositorio para el manejo de las tarifas.
+	 */
+	@Inject
+	private RepositorioTarifa repositorioTarifa;
+
+	/**
+	 * Repositorio para el manejo de ClienteAPR.
+	 */
+	@Inject
+	private RepositorioClienteAPR repositorioClienteAPR;
+
+	/**
+	 * Repositorio para el manejo de ClienteConvenio.
+	 */
+	@Inject
+	private RepositorioClienteConvenio repositorioClienteConvenio;
+
+	/**
+	 * Repositorio para el manejo de ClienteConvenioCuota.
+	 */
+	@Inject
+	private RepositorioClienteConvenioCuota repositorioClienteConvenioCuota;
+
+	/**
+	 * Repositorio para el manejo de emisores de boleta.
+	 */
+	@Inject
+	private RepositorioEmisorBoleta repositorioEmisorDTE;
+
+	/**
+	 * Repositorio para el manejo de las sesiones.
+	 */
+	@Inject
+	private RepositorioSesionUser repositorioSesionUser;
+	/**
+	 * Repositorio para el manejo de los ultimos pagos.
+	 */
+	@Inject
+	private RepositorioMedidorUltimoPagoAbono repositorioMedidorUltimoPagoAbono;
+
+	/**
+	 * Método que lista los cobros de medidores.
+	 *
+	 * @return listado de cobros de medidores.
+	 * @throws VentaPlusException VentaPlusException
+	 */
+	@RequestMapping(value = "/listar", method = RequestMethod.POST, produces = MediaType.APPLICATION_JSON_VALUE)
+	public List<CobroPeriodoMedidor> listarPeriodoCobro(@RequestBody CobroPeriodoMedidor datos,
+			@RequestHeader("token") String token) throws VentaPlusException {
+		ControladorValidacionSesion.validarTokenPrevioFlujo(repositorioSesionUser, token);
+		log.debug("[listarPeriodoCobro] INICIO");
+		log.debug("[listarPeriodoCobro] idLocal: " + datos.getIdLocal());
+		log.debug("[listarPeriodoCobro] periodo: " + datos.getPeriodo());
+		log.debug("[listarPeriodoCobro] idSector: " + datos.getIdSector());
+		log.debug("[listarPeriodoCobro] pagina: " + datos.getPagina());
+		log.debug("[listarPeriodoCobro] cantidadRegistros: " + datos.getCantidadRegistros());
+		log.debug("[listarPeriodoCobro] bsquedaAvanzada: " + datos.getBusquedaAvanzada());
+
+		List<CobroPeriodoMedidor> cobroPeriodo = repositorioCobroPeriodo.listarPeriodoCobro(datos.getIdLocal(),
+				datos.getPeriodo(), datos.getIdSector(), datos.getPagina(), datos.getCantidadRegistros(),
+				datos.getBusquedaAvanzada());
+
+		log.debug("[listarPeriodoCobro] FIN");
+		return cobroPeriodo;
+	}
+
+	/**
+	 * Metodo que obtiene la cantidad total de cobro periodo.
+	 *
+	 * @param datos datos del filtro.
+	 * @param token token sesion de usuario
+	 * @return cantidad de registros.
+	 * @throws VentaPlusException VentaPlusException
+	 */
+	@RequestMapping(value = "/obtenercantCobroPeriodo", method = RequestMethod.POST, produces = MediaType.APPLICATION_JSON_VALUE)
+	public Long obtenercantConvenio(@RequestBody CobroPeriodoMedidor datos, @RequestHeader("token") String token)
+			throws VentaPlusException {
+		ControladorValidacionSesion.validarTokenPrevioFlujo(repositorioSesionUser, token);
+		log.debug("[obtenercantCobroPeriodo] INICIO");
+		log.debug("[obtenercantCobroPeriodo] datos: " + datos);
+
+		Long cantCobroPeriodo = repositorioCobroPeriodo.obtenercantCobroPeriodo(datos.getIdCobro(), datos.getNumeroMedidor(), datos.getBusquedaAvanzada());
+
+		log.debug("[obtenercantCobroPeriodo] FIN");
+		return cantCobroPeriodo;
+	}
+
+	/**
+	 * Método que obtiene los ultimos pagos medidor.
+	 *
+	 * @return ultimos pagos.
+	 * @throws VentaPlusException VentaPlusException
+	 */
+	@RequestMapping(value = "/obtenerUltimosPagos", method = RequestMethod.GET, produces = MediaType.APPLICATION_JSON_VALUE)
+	public MedidorUltimoPagoAbonoResponse listarUltimosPagosMedidor(Long periodo, Long idLocal, Long idMedidor,
+			@RequestHeader("token") String token) throws VentaPlusException {
+		ControladorValidacionSesion.validarTokenPrevioFlujo(repositorioSesionUser, token);
+		log.debug("[listarUltimosPagosMedidor] INICIO");
+		log.debug("[listarUltimosPagosMedidor] periodo: " + periodo);
+		log.debug("[listarUltimosPagosMedidor] idLocal: " + idLocal);
+		log.debug("[listarUltimosPagosMedidor] idMedidor: " + idMedidor);
+		List<MedidorUltimoPagoAbonoResponse> ultimosPagosAbonosResponse = repositorioMedidorUltimoPagoAbono
+				.obtenerUltimosPagosYAbonos(periodo, idLocal, idMedidor);
+		log.debug("[listarUltimosPagosMedidor] response: " + ultimosPagosAbonosResponse.toString());
+		MedidorUltimoPagoAbonoResponse result = new MedidorUltimoPagoAbonoResponse();
+
+		if (ultimosPagosAbonosResponse.size() > 1) {
+			for (MedidorUltimoPagoAbonoResponse response : ultimosPagosAbonosResponse) {
+				if (response.getIdCobro().equals(-1L)) {
+					result.setFechaAbono(response.getFechaAbono());
+					result.setAbonoCobro(response.getAbonoCobro());
+				} else {
+					result.setIdCobro(response.getIdCobro());
+					result.setTotalCobro(response.getTotalCobro());
+					result.setFechaPago(response.getFechaPago());
+					result.setTotalUltimoPago(response.getTotalUltimoPago());
+				}
+			}
+			// log.debug("[listarUltimosPagosMedidor] MAPPER OUT: " + result.toString());
+			// log.debug("[listarUltimosPagosMedidor] FIN");
+			// return result;
+		} else if (ultimosPagosAbonosResponse.size() == 1) {
+			result = ultimosPagosAbonosResponse.get(0);
+		} else {
+			result.setFechaAbono("");
+			result.setAbonoCobro(BigDecimal.ZERO);
+			result.setIdCobro(0L);
+			result.setTotalCobro(BigDecimal.ZERO);
+			result.setFechaPago("");
+			result.setTotalUltimoPago(BigDecimal.ZERO);
+		}
+
+		// logica para asegurarnos que el objeto no vaya vacio, ya que el APR Printer se
+		// cae con los null
+		if (result.getFechaAbono() == null) {
+			result.setFechaAbono("");
+		}
+		if (result.getAbonoCobro() == null) {
+			result.setAbonoCobro(BigDecimal.ZERO);
+		}
+		if (result.getIdCobro() == null) {
+			result.setIdCobro(0L);
+		}
+		if (result.getTotalCobro() == null) {
+			result.setTotalCobro(BigDecimal.ZERO);
+		}
+		if (result.getFechaPago() == null) {
+			result.setFechaPago("");
+		}
+		if (result.getTotalUltimoPago() == null) {
+			result.setTotalUltimoPago(BigDecimal.ZERO);
+		}
+
+		log.debug("[listarUltimosPagosMedidor] MAPPER OUT: " + result.toString());
+		log.debug("[listarUltimosPagosMedidor] FIN");
+		return result;
+	}
+
+	/**
+	 * Método que lista los cobros por pagar.
+	 *
+	 * @return listado de cobros de medidores.
+	 * @throws VentaPlusException VentaPlusException
+	 */
+	@RequestMapping(value = "/listarCobrosPorPagar{idLocal}{nroMedidor}{nroSocio}{idCliente}", method = RequestMethod.GET, produces = MediaType.APPLICATION_JSON_VALUE)
+	public List<CobroPeriodoMedidor> listarCobrosPorPagar(Long idLocal, Long nroMedidor, Integer nroSocio,
+			Long idCliente, @RequestHeader("token") String token) throws VentaPlusException {
+		ControladorValidacionSesion.validarTokenPrevioFlujo(repositorioSesionUser, token);
+		log.debug("[listarCobrosPorPagar] INICIO");
+		log.debug("[listarCobrosPorPagar] idLocal: " + idLocal);
+		log.debug("[listarCobrosPorPagar] nroMedidor: " + nroMedidor);
+		log.debug("[listarCobrosPorPagar] nroSocio: " + nroSocio);
+		log.debug("[listarCobrosPorPagar] idCliente: " + idCliente);
+
+		List<CobroPeriodoMedidor> cobros = repositorioCobroPeriodo.listarCobroPorPagar(idLocal, nroMedidor, nroSocio,
+				idCliente);
+
+		log.debug("[listarCobrosPorPagar] FIN");
+		return cobros;
+	}
+
+	/**
+	 * Método obtenerCobro.
+	 *
+	 * @return datos del cobro.
+	 * @throws VentaPlusException VentaPlusException
+	 */
+	@RequestMapping(value = "/obtenerCobro{idCobro}", method = RequestMethod.GET, produces = MediaType.APPLICATION_JSON_VALUE)
+	public CobroPeriodoMedidor obtenerCobro(Long idCobro, @RequestHeader("token") String token)
+			throws VentaPlusException {
+		ControladorValidacionSesion.validarTokenPrevioFlujo(repositorioSesionUser, token);
+		log.debug("[obtenerCobro] INICIO");
+		log.debug("[obtenerCobro] idCobro: " + idCobro);
+
+		CobroPeriodoMedidor cobro = repositorioCobroPeriodo.obtenerPeriodoCobro(idCobro);
+		if (cobro != null && cobro.getIdCobro() != null && cobro.getIdCobro() > 0) {
+			cobro.setClienteAPR(repositorioClienteAPR.obtenerCliente(cobro.getIdCliente()));
+			cobro.setDetalleCobro(repositorioCobroPeriodoDetalle.listarPeriodoCobroDetalle(cobro.getIdCobro()));
+			cobro.setDatosEmisor(repositorioEmisorDTE.obtenerEmisorBoleta(cobro.getIdLocal(), Long.valueOf(-1)));
+		}
+		log.debug("[obtenerCobro] Cobro: " + cobro);
+
+		log.debug("[obtenerCobro] FIN");
+		return cobro;
+	}
+
+	/**
+	 * Método obtenerMedidorLecturaPendiente.
+	 *
+	 * @param idLocal
+	 * @param periodo
+	 * @param idSector
+	 * @param nroMedidor
+	 * @param token
+	 * @return medidor con toma de lectura pendiente
+	 * @throws VentaPlusException
+	 */
+	@RequestMapping(value = "/obtenerMedidorLecturaPendiente{idLocal}{periodo}{idSector}{nroMedidor}", method = RequestMethod.GET, produces = MediaType.APPLICATION_JSON_VALUE)
+	public CobroPeriodoMedidor obtenerMedidorLecturaPendiente(Long idLocal, Integer periodo, Long idSector,
+			Long nroMedidor, @RequestHeader("token") String token) throws VentaPlusException {
+		ControladorValidacionSesion.validarTokenPrevioFlujo(repositorioSesionUser, token);
+		log.debug("[obtenerMedidorLecturaPendiente] INICIO");
+		log.debug("[obtenerMedidorLecturaPendiente] idLocal: " + idLocal);
+		log.debug("[obtenerMedidorLecturaPendiente] periodo: " + periodo);
+		log.debug("[obtenerMedidorLecturaPendiente] idSector: " + idSector);
+		log.debug("[obtenerMedidorLecturaPendiente] nroMedidor: " + nroMedidor);
+
+		CobroPeriodoMedidor medidorPendiente = repositorioCobroPeriodo.obtenerMedidorLecturaPendiente(idLocal, periodo,
+				idSector, nroMedidor);
+
+		log.debug("[obtenerMedidorLecturaPendiente] medidorPendiente: " + medidorPendiente);
+		if (medidorPendiente == null) {
+			medidorPendiente = new CobroPeriodoMedidor();
+		}
+
+		log.debug("[obtenerMedidorLecturaPendiente] FIN");
+		return medidorPendiente;
+	}
+
+	/**
+	 * Método crearPeriodoCobro.
+	 *
+	 * @param datos del periodo a cobrar
+	 * @return estado de la operacion
+	 * @throws URISyntaxException URISyntaxException
+	 * @throws VentaPlusException VentaPlusException
+	 */
+	@RequestMapping(value = "/crearPeriodo", method = RequestMethod.POST, produces = MediaType.APPLICATION_JSON_VALUE)
+	public ResponseEntity<MensajeResponse> crearPeriodoCobro(@RequestBody CobroPeriodoMedidor datos,
+			@RequestHeader("token") String token) throws URISyntaxException, VentaPlusException {
+		ControladorValidacionSesion.validarTokenPrevioFlujo(repositorioSesionUser, token);
+		log.debug("[crearPeriodoCobro] INICIO");
+		ResponseEntity<MensajeResponse> response = null;
+		Long identificadorMedidor = null;
+		try {
+
+			log.debug("[crearPeriodoCobro] datos: " + datos);
+			try {
+				Integer periodoAnterior = 0;
+				SimpleDateFormat formatoPeriodo = new SimpleDateFormat("yyyyMMdd");
+				SimpleDateFormat formatoPeriodoAnterior = new SimpleDateFormat("yyyyMM");
+
+				Date fechaPeriodoActual = formatoPeriodo.parse(datos.getPeriodo() + "10");
+				Calendar calendar = Calendar.getInstance();
+				calendar.setTime(fechaPeriodoActual); // Establece la fecha original
+				calendar.add(Calendar.MONTH, -1); // Resta un mes para definir Periodo Anterior
+				periodoAnterior = Integer.valueOf(formatoPeriodoAnterior.format(calendar.getTime()));
+
+				calendar.add(Calendar.MONTH, 2); // Suma 2 meses para el Periodo Posterior de fecha de vencimiento
+				Date fechaVencimiento = calendar.getTime();
+
+				identificadorMedidor = repositorioCobroPeriodo.crearPeriodoCobro(datos.getIdLocal(), datos.getPeriodo(),
+						periodoAnterior, fechaVencimiento);
+
+			} catch (DataIntegrityViolationException e) {
+				log.error("[crearPeriodoCobro][DataIntegrityViolationException] Error", e);
+				log.error("[crearPeriodoCobro] El Periodo " + datos.getPeriodo() + " ya existe en el sistema");
+				throw new VentaPlusException("apr.periodo.error.agregar.duplicado");
+			} catch (ParseException e) {
+				log.error("[crearPeriodoCobro][ParseException] Error", e);
+				log.error("[crearPeriodoCobro] Ocurrio un error al convertir las fechas");
+			}
+
+			log.debug("[crearPeriodoCobro] Identificador del Medidor: " + identificadorMedidor);
+
+			if (!ValidadorUtil.exists(identificadorMedidor)) {
+				log.error("[crearPeriodoCobro] El Periodo  " + datos.getPeriodo() + " no se creo correctamente");
+				throw new VentaPlusException("apr.periodo.error.agregar");
+			}
+
+		} catch (VentaPlusException e) {
+			log.error("[crearPeriodoCobro][VentaPlusException] Error", e);
+			log.debug("[crearPeriodoCobro] FIN NO OK");
+			response = ResponseEntity.created(new URI("/servicios/cobroAPR/crearPeriodo"))
+					.headers(HeaderUtil.crearAlertError(NOMBRE_CONTEXTO, HeaderUtil.ERROR_SERVICIO, e.getMessage()))
+					.body(HeaderUtil.crearMensajeRespuesta(1, NOMBRE_CONTEXTO, e.getMessage()));
+		}
+
+		if (response == null) {
+			log.debug("[crearPeriodoCobro] FIN OK");
+			response = ResponseEntity.created(new URI("/servicios/cobroAPR/crearPeriodo"))
+					.headers(
+							HeaderUtil.createEntityCreationAlert(NOMBRE_CONTEXTO, String.valueOf(identificadorMedidor)))
+					.body(HeaderUtil.crearMensajeRespuesta(0, NOMBRE_CONTEXTO,
+							MessageUtil.obtenerMensaje("apr.periodo.agregar")));
+		}
+
+		return response;
+	}
+
+	/**
+	 * Método ingresarLecturaAnterior.
+	 *
+	 * @param datos datos del cobro
+	 * @return estado de la operacion
+	 * @throws URISyntaxException URISyntaxException
+	 * @throws VentaPlusException VentaPlusException
+	 */
+	@RequestMapping(value = "/ingresarLecturaAnterior", method = RequestMethod.POST, produces = MediaType.APPLICATION_JSON_VALUE)
+	public ResponseEntity<MensajeResponse> ingresarLecturaAnterior(@RequestBody CobroPeriodoMedidor datos,
+			@RequestHeader("token") String token) throws URISyntaxException, VentaPlusException {
+		ControladorValidacionSesion.validarTokenPrevioFlujo(repositorioSesionUser, token);
+		log.debug("[ingresarLecturaAnterior] INICIO");
+		ResponseEntity<MensajeResponse> response = null;
+		RetornoConsulta respQuery = new RetornoConsulta();
+
+		try {
+
+			log.debug("[ingresarLecturaAnterior] datos: " + datos);
+			respQuery.parsearRespuesta(repositorioCobroPeriodo.ingresarLecturaAnterior(datos.getIdCobro(),
+					datos.getM3LecturaAnteriorMedidor()));
+
+			if (respQuery.getCodigoRespuesta() == 2) { // codigo de error
+				log.error("[ingresarLecturaAnterior][DataIntegrityViolationException] Error: ");
+				log.error("[ingresarLecturaAnterior] El Cobro " + datos.getIdCobro() + " no existe en el sistema");
+
+				response = ResponseEntity.created(new URI("/servicios/cobroAPR/ingresarLecturaAnterior"))
+						.headers(HeaderUtil.crearAlertError(NOMBRE_CONTEXTO, HeaderUtil.ERROR_SERVICIO,
+								respQuery.getMensaje()))
+						.body(HeaderUtil.crearMensajeRespuesta(1, NOMBRE_CONTEXTO,
+								MessageUtil.obtenerMensaje(respQuery.getMensaje())));
+
+			}
+		} catch (JpaSystemException e) {
+			GenericJDBCException error = (GenericJDBCException) e.getCause();
+			log.error("[ingresarLecturaAnterior][JpaSystemException] ", e);
+			log.debug("[ingresarLecturaAnterior] FIN NO OK ");
+			response = ResponseEntity.created(new URI("/servicios/cobroAPR/ingresarLecturaAnterior"))
+					.headers(HeaderUtil.crearAlertError(NOMBRE_CONTEXTO, HeaderUtil.ERROR_SERVICIO, e.getMessage()))
+					.body(HeaderUtil.crearMensajeRespuesta(1, NOMBRE_CONTEXTO,
+							MessageUtil.obtenerMensaje(error.getSQLException().getMessage())));
+		}
+
+		if (response == null) {
+			log.debug("[ingresarLecturaActual] FIN OK");
+			response = ResponseEntity.created(new URI("/servicios/cobroAPR/ingresarLecturaAnterior"))
+					.headers(
+							HeaderUtil.createEntityCreationAlert(NOMBRE_CONTEXTO, String.valueOf(datos.getIdMedidor())))
+					.body(HeaderUtil.crearMensajeRespuesta(0, NOMBRE_CONTEXTO,
+							MessageUtil.obtenerMensaje("apr.cobro.ingresar.lectura.anterior")));
+		}
+
+		return response;
+	}
+
+	/**
+	 * Método ingresarLecturaActual.
+	 *
+	 * @param datos datos del cobro
+	 * @return estado de la operacion
+	 * @throws URISyntaxException URISyntaxException
+	 * @throws VentaPlusException VentaPlusException
+	 */
+	@RequestMapping(value = "/ingresarLecturaActual", method = RequestMethod.POST, produces = MediaType.APPLICATION_JSON_VALUE)
+	public ResponseEntity<MensajeResponse> ingresarLecturaActual(@RequestBody CobroPeriodoMedidor datos,
+			@RequestHeader("token") String token) throws URISyntaxException, VentaPlusException {
+		ControladorValidacionSesion.validarTokenPrevioFlujo(repositorioSesionUser, token);
+		log.debug("[ingresarLecturaActual] INICIO");
+		ResponseEntity<MensajeResponse> response = null;
+		RetornoConsulta respQuery = new RetornoConsulta();
+
+		try {
+
+			log.debug("[ingresarLecturaActual] datos: " + datos);
+			respQuery.parsearRespuesta(repositorioCobroPeriodo.ingresarLecturaActual(datos.getIdCobro(),
+					datos.getM3LecturaActualMedidor()));
+
+			if (respQuery.getCodigoRespuesta() == 1) { // codigo OK
+				CobroPeriodoMedidor cobro = repositorioCobroPeriodo.obtenerPeriodoCobro(datos.getIdCobro());
+				if (cobro != null && cobro.getIdCobro() > 0) {
+					generarDetallesCobroMedidor(cobro);
+				}
+
+			} else if (respQuery.getCodigoRespuesta() == 2) { // codigo de error
+				log.error("[ingresarLecturaActual][DataIntegrityViolationException] Error: ");
+				log.error("[ingresarLecturaActual] El Cobro " + datos.getIdCobro() + " no existe en el sistema");
+
+				response = ResponseEntity.created(new URI("/servicios/cobroAPR/ingresarLecturaActual"))
+						.headers(HeaderUtil.crearAlertError(NOMBRE_CONTEXTO, HeaderUtil.ERROR_SERVICIO,
+								respQuery.getMensaje()))
+						.body(HeaderUtil.crearMensajeRespuesta(1, NOMBRE_CONTEXTO,
+								MessageUtil.obtenerMensaje(respQuery.getMensaje())));
+
+			}
+		} catch (JpaSystemException e) {
+			GenericJDBCException error = (GenericJDBCException) e.getCause();
+			log.error("[ingresarLecturaActual][JpaSystemException] ", e);
+			log.debug("[ingresarLecturaActual] FIN NO OK ");
+			response = ResponseEntity.created(new URI("/servicios/cobroAPR/ingresarLecturaActual"))
+					.headers(HeaderUtil.crearAlertError(NOMBRE_CONTEXTO, HeaderUtil.ERROR_SERVICIO, e.getMessage()))
+					.body(HeaderUtil.crearMensajeRespuesta(1, NOMBRE_CONTEXTO,
+							MessageUtil.obtenerMensaje(error.getSQLException().getMessage())));
+		}
+
+		if (response == null) {
+			log.debug("[ingresarLecturaActual] FIN OK");
+			response = ResponseEntity.created(new URI("/servicios/cobroAPR/ingresarLecturaActual"))
+					.headers(
+							HeaderUtil.createEntityCreationAlert(NOMBRE_CONTEXTO, String.valueOf(datos.getIdMedidor())))
+					.body(HeaderUtil.crearMensajeRespuesta(0, NOMBRE_CONTEXTO,
+							MessageUtil.obtenerMensaje("apr.cobro.ingresar.lectura.actual")));
+		}
+
+		return response;
+	}
+
+	/**
+	 * Método generarDetallesCobroMedidor.
+	 *
+	 * @param cobro
+	 */
+	private void generarDetallesCobroMedidor(CobroPeriodoMedidor cobro) {
+
+		// Eliminar si existen detalles antiguos
+		repositorioCobroPeriodoDetalle.eliminarPeriodoCobroDetalle(cobro.getIdCobro());
+
+		// Insertamos el cargo Fijo
+		CobroPeriodoMedidorDetalle cargoFijo = new CobroPeriodoMedidorDetalle();
+		cargoFijo.setIdCobro(cobro.getIdCobro());
+		cargoFijo.setItemTipo("CargoFijo");
+		cargoFijo.setItemNombre("CARGO FIJO");
+		cargoFijo.setItemValor(cobro.getCargoFijoArranque());
+		repositorioCobroPeriodoDetalle.crearPeriodoCobro(cargoFijo.getIdCobro(), cargoFijo.getItemTipo(),
+				cargoFijo.getItemNombre(), cargoFijo.getItemValor(), cargoFijo.getIdClienteConvenio(),
+				cargoFijo.getIdConvenioCuota(), cargoFijo.getNumeroCuota());
+
+		// Insertamos el cobro por Metro Cubico Consumido
+		CobroPeriodoMedidorDetalle m3Consumido = new CobroPeriodoMedidorDetalle();
+		m3Consumido.setIdCobro(cobro.getIdCobro());
+		m3Consumido.setItemTipo("M3Consumido");
+		m3Consumido.setItemNombre("AGUA POTABLE " + cobro.getM3ConsumidosMedidor() + " M3 CONSUMIDOS");
+
+		List<Tarifa> tarifas = repositorioTarifa.listarTarifa(cobro.getIdLocal(), 1);
+		Integer costoM3Consumidos = 0;
+		int m3 = 1;
+		while (m3 <= cobro.getM3ConsumidosMedidor()) {
+			for (Tarifa tarifa : tarifas) {
+				if (m3 >= tarifa.getDesde() && m3 <= tarifa.getHasta()) {
+					costoM3Consumidos += tarifa.getValorTramo();
+					break;
+				}
+			}
+			m3++;
+		}
+		m3Consumido.setItemValor(costoM3Consumidos);
+		repositorioCobroPeriodoDetalle.crearPeriodoCobro(m3Consumido.getIdCobro(), m3Consumido.getItemTipo(),
+				m3Consumido.getItemNombre(), m3Consumido.getItemValor(), m3Consumido.getIdClienteConvenio(),
+				m3Consumido.getIdConvenioCuota(), m3Consumido.getNumeroCuota());
+
+		// Insertamos los valores de los convenios asociados al medidor
+		List<ClienteConvenio> listadoConvenios = repositorioClienteConvenio
+				.listarClienteConvenioPorPeriodo(cobro.getIdMedidor(), cobro.getPeriodo());
+		if (listadoConvenios != null && !listadoConvenios.isEmpty()) {
+			for (ClienteConvenio convenio : listadoConvenios) {
+
+				if (convenio.getIdTipoOperacion() == 2) { // Convenio de Descuento
+					CobroPeriodoMedidorDetalle descuento = new CobroPeriodoMedidorDetalle();
+					descuento.setIdCobro(cobro.getIdCobro());
+					descuento.setItemTipo("Convenio");
+					descuento.setItemNombre(convenio.getConvenio());
+					descuento.setItemValor(convenio.getMonto() * -1); // Los descuentos pasan negativos
+
+					repositorioCobroPeriodoDetalle.crearPeriodoCobro(descuento.getIdCobro(), descuento.getItemTipo(),
+							descuento.getItemNombre(), descuento.getItemValor(), descuento.getIdClienteConvenio(),
+							descuento.getIdConvenioCuota(), descuento.getNumeroCuota());
+
+				} else if (convenio.getIdTipoOperacion() == 1) { // Convenio de Recargos
+
+					CobroPeriodoMedidorDetalle descuento = new CobroPeriodoMedidorDetalle();
+
+					if (!convenio.getFlagCuotas() && convenio.getPeriodoVencimiento().equals(cobro.getPeriodo())) { // Convenio
+																													// Recargo
+																													// SIN
+																													// Cuotas
+																													// y
+																													// del
+																													// periodo
+																													// correspondiente
+						descuento.setIdCobro(cobro.getIdCobro());
+						descuento.setItemTipo("Convenio");
+						descuento.setIdClienteConvenio(convenio.getIdClienteConvenio());
+						descuento.setItemNombre(convenio.getConvenio());
+						descuento.setItemValor(convenio.getMonto());
+					} else { // Convenio Recargo CON Cuotas
+						List<ClienteConvenioCuota> cuotas = repositorioClienteConvenioCuota
+								.listarClienteConvenioCuota(convenio.getIdClienteConvenio());
+						if (cuotas != null && !cuotas.isEmpty()) {
+							for (ClienteConvenioCuota cuota : cuotas) {
+								if (cuota.getPeriodoCobro().equals(cobro.getPeriodo())) {
+									descuento.setIdCobro(cobro.getIdCobro());
+									descuento.setItemTipo("Convenio");
+									descuento.setItemNombre(convenio.getConvenio() + ", CUOTA " + cuota.getNroCuota()
+											+ "/" + convenio.getCantidadCuotas());
+									descuento.setItemValor(cuota.getValorCuota());
+									descuento.setIdClienteConvenio(convenio.getIdClienteConvenio());
+									descuento.setIdConvenioCuota(cuota.getIdConvenioCuota());
+									descuento.setNumeroCuota(cuota.getNroCuota());
+									break;
+								}
+							}
+						}
+					}
+
+					if (descuento != null && descuento.getIdCobro() != null && descuento.getIdCobro() > 0) {
+						repositorioCobroPeriodoDetalle.crearPeriodoCobro(descuento.getIdCobro(),
+								descuento.getItemTipo(), descuento.getItemNombre(), descuento.getItemValor(),
+								descuento.getIdClienteConvenio(), descuento.getIdConvenioCuota(),
+								descuento.getNumeroCuota());
+					}
+				}
+			}
+		}
+		consolidarMultaPeriodoAnterior(cobro);
+	}
+
+	/**
+	 * Método consolidarMultaPeriodoAnterior.
+	 *
+	 * @param cobro CobroPeriodoMedidor
+	 */
+	private void consolidarMultaPeriodoAnterior(CobroPeriodoMedidor cobro) {
+		RetornoConsulta multaPeriodoAnterior = new RetornoConsulta();
+		multaPeriodoAnterior.parsearRespuesta(
+				repositorioCobroPeriodo.verificarMultaPeriodoAnterior(cobro.getPeriodo(), cobro.getIdMedidor()));
+
+		if (multaPeriodoAnterior.getMensaje().equalsIgnoreCase("SI")) {
+			// Insertar porcentaje multa a detalle cobro periodo
+			CobroPeriodoMedidorDetalle multaPeriodo = new CobroPeriodoMedidorDetalle();
+			multaPeriodo.setIdCobro(cobro.getIdCobro());
+			multaPeriodo.setItemTipo("MultaNoPago");
+			multaPeriodo.setItemNombre("MULTA POR NO PAGO");
+			multaPeriodo.setItemValor(multaPeriodoAnterior.getCodigoRespuesta());
+			repositorioCobroPeriodoDetalle.crearPeriodoCobro(multaPeriodo.getIdCobro(), multaPeriodo.getItemTipo(),
+					multaPeriodo.getItemNombre(), multaPeriodo.getItemValor(), multaPeriodo.getIdClienteConvenio(),
+					multaPeriodo.getIdConvenioCuota(), multaPeriodo.getNumeroCuota());
+		}
+	}
+
+	/**
+	 * Método ingresarPagoCobroMedidor.
+	 *
+	 * @param datos datos del pago
+	 * @return estado de la operación
+	 * @throws URISyntaxException URISyntaxException
+	 * @throws VentaPlusException VentaPlusException
+	 */
+	@RequestMapping(value = "/ingresarPagoCobroMedidor", method = RequestMethod.POST, produces = MediaType.APPLICATION_JSON_VALUE)
+	public ResponseEntity<MensajeResponse> ingresarPagoCobroMedidor(@RequestBody CobroPeriodoMedidor datos,
+			@RequestHeader("token") String token) throws URISyntaxException, VentaPlusException {
+		ControladorValidacionSesion.validarTokenPrevioFlujo(repositorioSesionUser, token);
+		log.debug("[ingresarPagoCobroMedidor] INICIO");
+		ResponseEntity<MensajeResponse> response = null;
+		RetornoConsulta respQuery = new RetornoConsulta();
+
+		try {
+
+			log.debug("[ingresarPagoCobroMedidor] datos: " + datos);
+			respQuery.parsearRespuesta(repositorioCobroPeriodo.ingresarPagoCobroMedidor(datos.getIdCobro(),
+					datos.getIdTipoPago(), datos.getIdBanco(), datos.getBancoNroTransaccion(),
+					datos.getBancoFechaTransferencia(), datos.getBancoNroCheque()));
+
+			if (respQuery.getCodigoRespuesta() == 2) { // codigo de error
+				log.error("[ingresarPagoCobroMedidor][DataIntegrityViolationException] Error: ");
+				log.error("[ingresarPagoCobroMedidor] El Cobro " + datos.getIdCobro() + " no existe en el sistema");
+
+				response = ResponseEntity.created(new URI("/servicios/cobroAPR/ingresarPagoCobroMedidor"))
+						.headers(HeaderUtil.crearAlertError(NOMBRE_CONTEXTO, HeaderUtil.ERROR_SERVICIO,
+								respQuery.getMensaje()))
+						.body(HeaderUtil.crearMensajeRespuesta(1, NOMBRE_CONTEXTO,
+								MessageUtil.obtenerMensaje(respQuery.getMensaje())));
+
+			}
+		} catch (JpaSystemException e) {
+			GenericJDBCException error = (GenericJDBCException) e.getCause();
+			log.error("[ingresarPagoCobroMedidor][JpaSystemException] ", e);
+			log.debug("[ingresarPagoCobroMedidor] FIN NO OK ");
+			response = ResponseEntity.created(new URI("/servicios/cobroAPR/ingresarPagoCobroMedidor"))
+					.headers(HeaderUtil.crearAlertError(NOMBRE_CONTEXTO, HeaderUtil.ERROR_SERVICIO, e.getMessage()))
+					.body(HeaderUtil.crearMensajeRespuesta(1, NOMBRE_CONTEXTO,
+							MessageUtil.obtenerMensaje(error.getSQLException().getMessage())));
+		}
+
+		if (response == null) {
+			log.debug("[ingresarPagoCobroMedidor] FIN OK");
+			response = ResponseEntity.created(new URI("/servicios/cobroAPR/ingresarPagoCobroMedidor"))
+					.headers(
+							HeaderUtil.createEntityCreationAlert(NOMBRE_CONTEXTO, String.valueOf(datos.getIdMedidor())))
+					.body(HeaderUtil.crearMensajeRespuesta(0, NOMBRE_CONTEXTO,
+							MessageUtil.obtenerMensaje("apr.cobro.ingresar.pago")));
+		}
+
+		return response;
+	}
+
+	/**
+	 * Método ingresarAbonoCobroMedidor.
+	 *
+	 * @param datos datos del abono
+	 * @return estado de la operacion
+	 * @throws URISyntaxException URISyntaxException
+	 * @throws VentaPlusException VentaPlusException
+	 */
+	@RequestMapping(value = "/ingresarAbonoCobroMedidor", method = RequestMethod.POST, produces = MediaType.APPLICATION_JSON_VALUE)
+	public ResponseEntity<MensajeResponse> ingresarAbonoCobroMedidor(@RequestBody CobroPeriodoMedidor datos,
+			@RequestHeader("token") String token) throws URISyntaxException, VentaPlusException {
+		ControladorValidacionSesion.validarTokenPrevioFlujo(repositorioSesionUser, token);
+		log.debug("[ingresarAbonoCobroMedidor] INICIO");
+		ResponseEntity<MensajeResponse> response = null;
+		RetornoConsulta respQuery = new RetornoConsulta();
+
+		try {
+
+			log.debug("[ingresarAbonoCobroMedidor] datos: " + datos);
+			respQuery.parsearRespuesta(repositorioCobroPeriodo.ingresarAbonoCobroMedidor(datos.getIdCobro(),
+					datos.getAbonoCobro(), datos.getIdTipoPago()));
+
+			if (respQuery.getCodigoRespuesta() == 2) { // codigo de error
+				log.error("[ingresarAbonoCobroMedidor][DataIntegrityViolationException] Error: ");
+				log.error("[ingresarAbonoCobroMedidor] El Cobro " + datos.getIdCobro() + " no existe en el sistema");
+
+				response = ResponseEntity.created(new URI("/servicios/cobroAPR/ingresarAbonoCobroMedidor"))
+						.headers(HeaderUtil.crearAlertError(NOMBRE_CONTEXTO, HeaderUtil.ERROR_SERVICIO,
+								respQuery.getMensaje()))
+						.body(HeaderUtil.crearMensajeRespuesta(1, NOMBRE_CONTEXTO,
+								MessageUtil.obtenerMensaje(respQuery.getMensaje())));
+
+			}
+		} catch (JpaSystemException e) {
+			GenericJDBCException error = (GenericJDBCException) e.getCause();
+			log.error("[ingresarAbonoCobroMedidor][JpaSystemException] ", e);
+			log.debug("[ingresarAbonoCobroMedidor] FIN NO OK ");
+			response = ResponseEntity.created(new URI("/servicios/cobroAPR/ingresarAbonoCobroMedidor"))
+					.headers(HeaderUtil.crearAlertError(NOMBRE_CONTEXTO, HeaderUtil.ERROR_SERVICIO, e.getMessage()))
+					.body(HeaderUtil.crearMensajeRespuesta(1, NOMBRE_CONTEXTO,
+							MessageUtil.obtenerMensaje(error.getSQLException().getMessage())));
+		}
+
+		if (response == null) {
+			log.debug("[ingresarAbonoCobroMedidor] FIN OK");
+			response = ResponseEntity.created(new URI("/servicios/cobroAPR/ingresarAbonoCobroMedidor"))
+					.headers(
+							HeaderUtil.createEntityCreationAlert(NOMBRE_CONTEXTO, String.valueOf(datos.getIdMedidor())))
+					.body(HeaderUtil.crearMensajeRespuesta(0, NOMBRE_CONTEXTO,
+							MessageUtil.obtenerMensaje("apr.cobro.ingresar.abono")));
+		}
+
+		return response;
+	}
+
+	/**
+	 * Método que lista el detalle de los cobros de medidores.
+	 *
+	 * @return listado de detalles de cobros de medidores.
+	 * @throws VentaPlusException VentaPlusException
+	 */
+	@RequestMapping(value = "/listarCobrosDetalle{idCobro}", method = RequestMethod.GET, produces = MediaType.APPLICATION_JSON_VALUE)
+	public List<CobroPeriodoMedidorDetalle> listarDetalleCobroPeriodo(Long idCobro,
+			@RequestHeader("token") String token) throws VentaPlusException {
+		ControladorValidacionSesion.validarTokenPrevioFlujo(repositorioSesionUser, token);
+		log.debug("[listarDetalleCobroPeriodo] INICIO");
+		log.debug("[listarDetalleCobroPeriodo] idCobro: " + idCobro);
+
+		List<CobroPeriodoMedidorDetalle> detalleCobro = repositorioCobroPeriodoDetalle
+				.listarPeriodoCobroDetalle(idCobro);
+
+		log.debug("[listarDetalleCobroPeriodo] FIN");
+		return detalleCobro;
+	}
+
+	/**
+	 * Método que lista los periodos cobrados de un local.
+	 *
+	 * @return listado de periodos
+	 * @throws VentaPlusException VentaPlusException
+	 */
+	@RequestMapping(value = "/listarPeriodosLocal{idLocal}", method = RequestMethod.GET, produces = MediaType.APPLICATION_JSON_VALUE)
+	public List<Integer> listarPeriodosLocal(Long idLocal, @RequestHeader("token") String token)
+			throws VentaPlusException {
+		ControladorValidacionSesion.validarTokenPrevioFlujo(repositorioSesionUser, token);
+		log.debug("[listarPeriodosLocal] INICIO");
+		log.debug("[listarPeriodosLocal] idLocal: " + idLocal);
+
+		List<Integer> periodosLocal = repositorioCobroPeriodo.listarPeriodosLocal(idLocal);
+
+		log.debug("[listarPeriodosLocal] FIN");
+		return periodosLocal;
+	}
+
+	/**
+	 * Método crearDTECobro.
+	 *
+	 * @param datos del periodo a cobrar
+	 * @return estado de la operacion
+	 * @throws URISyntaxException URISyntaxException
+	 * @throws VentaPlusException VentaPlusException
+	 */
+	@RequestMapping(value = "/crearDTECobro", method = RequestMethod.POST, produces = MediaType.APPLICATION_JSON_VALUE)
+	public ResponseEntity<MensajeResponse> crearDTECobro(@RequestBody CobroPeriodoMedidor datos,
+			@RequestHeader("token") String token) throws URISyntaxException, VentaPlusException {
+		ControladorValidacionSesion.validarTokenPrevioFlujo(repositorioSesionUser, token);
+		log.debug("[crearDTECobro] INICIO");
+		ResponseEntity<MensajeResponse> response = null;
+		String mensajeOK = MessageUtil.obtenerMensaje("apr.periodo.crear.dte");
+		try {
+
+			log.debug("[crearDTECobro] datos: " + datos);
+			try {
+
+				datos.setClienteAPR(repositorioClienteAPR.obtenerCliente(datos.getIdCliente()));
+				datos.setDetalleCobro(repositorioCobroPeriodoDetalle.listarPeriodoCobroDetalle(datos.getIdCobro()));
+
+				if (datos.getClienteAPR() != null && datos.getClienteAPR().getTipoDTECliente() != null) {
+					if (datos.getClienteAPR().getTipoDTECliente().equals(DTE_BOLETA_EXCENTA)) {
+						datos.setFolioBoleta(validarCreacionBoletaElectronicaSII(datos));
+						if (datos.getFolioBoleta() == -1) {
+							response = ResponseEntity.created(new URI("/servicios/cobroAPR/crearDTECobro"))
+									.headers(HeaderUtil.crearAlertError(NOMBRE_CONTEXTO, HeaderUtil.ERROR_SERVICIO,
+											"apr.periodo.error.dte"))
+									.body(HeaderUtil.crearMensajeRespuesta(1, NOMBRE_CONTEXTO,
+											MessageUtil.obtenerMensaje("apr.periodo.error.dte")));
+						} else {
+							mensajeOK = mensajeOK.replace("VAR_TIPO_DTE", "Boleta");
+							mensajeOK = mensajeOK.replace("VAR_FOLIO", datos.getFolioBoleta().toString());
+						}
+					} else if (datos.getClienteAPR().getTipoDTECliente().equals(DTE_FACTURA_EXCENTA)) {
+						datos.setFolioFactura(validarCreacionFacturaElectronicaSII(datos));
+						if (datos.getFolioFactura() == -1) {
+							response = ResponseEntity.created(new URI("/servicios/cobroAPR/crearDTECobro"))
+									.headers(HeaderUtil.crearAlertError(NOMBRE_CONTEXTO, HeaderUtil.ERROR_SERVICIO,
+											"apr.periodo.error.dte"))
+									.body(HeaderUtil.crearMensajeRespuesta(1, NOMBRE_CONTEXTO,
+											MessageUtil.obtenerMensaje("apr.periodo.error.dte")));
+						} else {
+							mensajeOK = mensajeOK.replace("VAR_TIPO_DTE", "Factura");
+							mensajeOK = mensajeOK.replace("VAR_FOLIO", datos.getFolioFactura().toString());
+						}
+
+					}
+				}
+
+			} catch (DataIntegrityViolationException e) {
+				log.error("[crearDTECobro][DataIntegrityViolationException] Error", e);
+				log.error("[crearDTECobro] El Periodo " + datos.getPeriodo() + " ya existe en el sistema");
+				throw new VentaPlusException("apr.periodo.error.agregar.duplicado");
+			}
+
+		} catch (VentaPlusException e) {
+			log.error("[crearDTECobro][VentaPlusException] Error", e);
+			log.debug("[crearDTECobro] FIN NO OK");
+			response = ResponseEntity.created(new URI("/servicios/cobroAPR/crearDTECobro"))
+					.headers(HeaderUtil.crearAlertError(NOMBRE_CONTEXTO, HeaderUtil.ERROR_SERVICIO, e.getMessage()))
+					.body(HeaderUtil.crearMensajeRespuesta(1, NOMBRE_CONTEXTO, e.getMessage()));
+		}
+
+		if (response == null) {
+			log.debug("[crearPeriodoCobro] FIN OK");
+			response = ResponseEntity.created(new URI("/servicios/cobroAPR/crearDTECobro"))
+					.headers(HeaderUtil.createEntityCreationAlert(NOMBRE_CONTEXTO, String.valueOf(datos.getIdCobro())))
+					.body(HeaderUtil.crearMensajeRespuesta(0, NOMBRE_CONTEXTO, mensajeOK));
+		}
+
+		return response;
+	}
+
+	/**
+	 * Método validarCreacionBoletaElectronicaSII.
+	 *
+	 * @param datos datos de la venta.
+	 * @return numero de Folio de boleta electronica, si es que corresponde.
+	 */
+	private Integer validarCreacionBoletaElectronicaSII(CobroPeriodoMedidor datos) {
+		Integer folio = 0;
+		EmisorBoleta emisor = repositorioEmisorDTE.obtenerEmisorBoleta(datos.getIdLocal(), Long.valueOf(-1));
+
+		if (emisor == null || emisor.getRut().equals("76430498-5")) {
+			emisor = new EmisorBoleta();
+			emisor.setApiKey("41eb78998d444dbaa4922c410ef14057");
+			emisor.setRut("76430498-5");
+			emisor.setRazonSocial("HOSTY SPA");
+			emisor.setGiros("EMPRESAS DE SERVICIOS INTEGRALES DE INFORMÁTICA");
+			emisor.setCodSIISucursal("79457965");
+			emisor.setDireccion("ARTURO PRAT 527 3 pis OF 1");
+			emisor.setComuna("Curicó");
+			emisor.setRutReceptor("66666666-6");
+			emisor.setEstado(true);
+			emisor.setEmiteSiempreBoleta(false);
+		}
+
+		if (emisor != null && emisor.getEstado()) {
+			ControladorSIIAPR controladorSII = new ControladorSIIAPR();
+			ResponseBoleta boleta = null;
+			try {
+				boleta = controladorSII.crearBoletaElectronica(datos, emisor);
+				folio = boleta.getFolio();
+
+				log.debug("[validarCreacionBoletaElectronicaSII]: " + boleta);
+
+				if (boleta.getFlag_procesado_OK()) {
+					// Si es ok la llamada al servicio entonces NO guardamos el Json y el Header
+					// request
+					boleta.setJson_request("");
+					boleta.setHeader_request("");
+					repositorioCobroPeriodo.insertarRespuestaBoletaSII(boleta.getFolio(), datos.getIdCobro(),
+							boleta.getToken(), boleta.getResolucion().getFecha(), boleta.getResolucion().getNumero(),
+							boleta.getTimbre(), true, boleta.getFlag_procesado_OK(), boleta.getJson_request(),
+							boleta.getHeader_request());
+				} else {
+					log.error("[validarCreacionBoletaElectronicaSII]: Error al crear la boleta electrónica");
+
+					// repositorioCobroPeriodo.insertarRespuestaBoletaSII(-1, datos.getIdCobro(),
+					// boleta.getToken(),
+					// null, null, boleta.getTimbre(), true, boleta.getFlag_procesado_OK(),
+					// boleta.getJson_request(),
+					// boleta.getHeader_request());
+
+				}
+
+			} catch (VentaPlusException e) {
+				log.error("Error [validarCreacionBoletaElectronicaSII]: ", e);
+			}
+
+		}
+		return folio;
+	}
+
+	/**
+	 * Método validarCreacionFacturaElectronicaSII.
+	 *
+	 * @param datos datos de la venta.
+	 * @return numero de Folio de Factura electronica, si es que corresponde.
+	 */
+	private Integer validarCreacionFacturaElectronicaSII(CobroPeriodoMedidor datos) {
+		Integer folio = 0;
+		EmisorBoleta emisor = repositorioEmisorDTE.obtenerEmisorBoleta(datos.getIdLocal(), Long.valueOf(-1));
+
+		if (emisor == null || emisor.getRut().equals("76430498-5")) {
+			emisor = new EmisorBoleta();
+			emisor.setApiKey("41eb78998d444dbaa4922c410ef14057");
+			emisor.setRut("76430498-5");
+			emisor.setRazonSocial("HOSTY SPA");
+			emisor.setCodigoActividad("620200");
+			emisor.setGiros("EMPRESAS DE SERVICIOS INTEGRALES DE INFORMÁTICA");
+			emisor.setCodSIISucursal("79457965");
+			emisor.setDireccion("ARTURO PRAT 527 3 pis OF 1");
+			emisor.setComuna("Curicó");
+			emisor.setRutReceptor("66666666-6");
+			emisor.setEstado(true);
+			emisor.setEmiteSiempreBoleta(false);
+		}
+
+		if (emisor != null && emisor.getEstado()) {
+			ControladorSIIAPR controladorSII = new ControladorSIIAPR();
+			ResponseFactura factura = null;
+			try {
+
+				// Validaciones de largos máximos para el servicio web
+				if (emisor.getRazonSocial().trim().length() > 100) {
+					emisor.setRazonSocial(emisor.getRazonSocial().trim().substring(0, 99));
+				}
+
+				if (emisor.getGiros().trim().length() > 80) {
+					emisor.setGiros(emisor.getGiros().trim().substring(0, 79));
+				}
+
+				if (emisor.getDireccion().trim().length() > 60) {
+					emisor.setDireccion(emisor.getDireccion().trim().substring(0, 59));
+				}
+
+				if (emisor.getComuna().trim().length() > 20) {
+					emisor.setComuna(emisor.getComuna().trim().substring(0, 19));
+				}
+
+				factura = controladorSII.crearFacturaElectronica(datos, emisor);
+				folio = factura.getFolio();
+
+				log.debug("[validarCreacionFacturaElectronicaSII]: " + factura);
+
+				if (factura.getFlag_procesado_OK()) { // Si es ok entonces NO guardamos el Json y el Header request
+					factura.setJson_request("");
+					factura.setHeader_request("");
+					repositorioCobroPeriodo.insertarRespuestaFacturaSII(factura.getFolio(), datos.getIdCobro(),
+							datos.getTotalCobro(), 19, factura.getToken(), factura.getTimbre(), 1, 1, 1,
+							emisor.getCodigoActividad(), datos.getClienteAPR().getRutCliente(),
+							datos.getClienteAPR().getFacturaRazonSocial(), "", datos.getClienteAPR().getFacturaGiro(),
+							datos.getClienteAPR().getFacturaDireccion(), datos.getClienteAPR().getFacturaComuna(), "",
+							true, factura.getFlag_procesado_OK(), factura.getJson_request(),
+							factura.getHeader_request());
+				} else {
+					log.error("[validarCreacionFacturaElectronicaSII]: Error al crear la factura electrónica");
+					// repositorioCobroPeriodo.insertarRespuestaFacturaSII(-1, datos.getIdCobro(),
+					// datos.getTotalCobro(),
+					// 19, factura.getToken(), factura.getTimbre(), 1, 1, 1,
+					// emisor.getCodigoActividad(),
+					// datos.getClienteAPR().getRutCliente(),
+					// datos.getClienteAPR().getFacturaRazonSocial(), "",
+					// datos.getClienteAPR().getFacturaGiro(),
+					// datos.getClienteAPR().getFacturaDireccion(),
+					// datos.getClienteAPR().getFacturaComuna(), "", true,
+					// factura.getFlag_procesado_OK(),
+					// factura.getJson_request(), factura.getHeader_request());
+				}
+
+			} catch (VentaPlusException e) {
+				log.error("Error [validarCreacionFacturaElectronicaSII]: ", e);
+			}
+		}
+
+		return folio;
+	}
+
+	/**
+	 * Método crear ClienteConvenio.
+	 *
+	 * @param datos del ClienteConvenio
+	 * @return estado de la operacion
+	 * @throws URISyntaxException URISyntaxException
+	 * @throws VentaPlusException VentaPlusException
+	 */
+	@RequestMapping(value = "/repactarDeuda", method = RequestMethod.POST, produces = MediaType.APPLICATION_JSON_VALUE)
+	public ResponseEntity<MensajeResponse> repactarDeuda(@RequestBody ClienteConvenio datos,
+			@RequestHeader("token") String token) throws URISyntaxException, VentaPlusException {
+		ControladorValidacionSesion.validarTokenPrevioFlujo(repositorioSesionUser, token);
+		log.debug("[repactarDeuda] INICIO");
+		ResponseEntity<MensajeResponse> response = null;
+		ResponseEntity<MensajeResponse> responseClienteConvenio = null;
+		RetornoConsulta respQuery = new RetornoConsulta();
+		try {
+			log.debug("[repactarDeuda] datos: " + datos);
+
+			ControladorClienteConvenio controladorClienteConvenio = new ControladorClienteConvenio();
+			controladorClienteConvenio.setRepositorioClienteConvenio(repositorioClienteConvenio);
+			controladorClienteConvenio.setRepositorioClienteConvenioCuota(repositorioClienteConvenioCuota);
+			controladorClienteConvenio.setRepositorioSesionUser(repositorioSesionUser);
+
+			responseClienteConvenio = controladorClienteConvenio.crearClienteConvenio(datos, token);
+
+			if (responseClienteConvenio.getBody().getCodigoRespuesta() != 0) { // error
+				log.error("[repactarDeuda][CrearClienteConvenio]" + responseClienteConvenio.getBody().getMensaje());
+
+				response = ResponseEntity.created(new URI("/servicios/cobroAPR/repactarDeuda"))
+						.headers(HeaderUtil.crearAlertError(NOMBRE_CONTEXTO, HeaderUtil.ERROR_SERVICIO,
+								responseClienteConvenio.getBody().getMensaje()))
+						.body(HeaderUtil.crearMensajeRespuesta(1, NOMBRE_CONTEXTO,
+								responseClienteConvenio.getBody().getMensaje()));
+			} else {
+				// registramos la repactacion de la deuda historica
+				respQuery.parsearRespuesta(repositorioCobroPeriodo.repactarDeudaMedidor(datos.getIdMedidor()));
+			}
+
+		} catch (JpaSystemException e) {
+			GenericJDBCException error = (GenericJDBCException) e.getCause();
+			log.error("[repactarDeuda][JpaSystemException] ", e);
+			log.debug("[repactarDeuda] FIN NO OK ");
+			response = ResponseEntity.created(new URI("/servicios/cobroAPR/repactarDeuda"))
+					.headers(HeaderUtil.crearAlertError(NOMBRE_CONTEXTO, HeaderUtil.ERROR_SERVICIO, e.getMessage()))
+					.body(HeaderUtil.crearMensajeRespuesta(1, NOMBRE_CONTEXTO,
+							MessageUtil.obtenerMensaje(error.getSQLException().getMessage())));
+		}
+
+		if (response == null) {
+			log.debug("[repactarDeuda] FIN OK");
+			response = ResponseEntity.created(new URI("/servicios/cobroAPR/repactarDeuda"))
+					.headers(
+							HeaderUtil.createEntityCreationAlert(NOMBRE_CONTEXTO, String.valueOf(datos.getIdMedidor())))
+					.body(HeaderUtil.crearMensajeRespuesta(0, NOMBRE_CONTEXTO,
+							MessageUtil.obtenerMensaje("apr.cobro.repactar.deuda")));
+		}
+
+		return response;
+	}
+
+}
